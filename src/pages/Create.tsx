@@ -112,7 +112,7 @@ export default function Create() {
                 <div className="bg-gray-50 border border-gray-100 text-gray-800 px-5 py-4 rounded-2xl rounded-tl-sm w-full text-sm shadow-sm">
                   <div className="flex items-center gap-2 mb-3 font-medium text-purple-600">
                     <Video className="w-4 h-4" />
-                    Vibeknow AI
+                    Open-VibeKnow AI
                   </div>
                   <div className="space-y-3">
                     {progressSteps.map((step, idx) => (

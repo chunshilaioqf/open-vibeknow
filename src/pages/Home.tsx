@@ -1,11 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { motion } from 'motion/react';
-import { FileUp, Link as LinkIcon, Mic, Music, Sparkles, ChevronDown } from 'lucide-react';
+import { FileUp, Link as LinkIcon, Mic, Music, Sparkles, ChevronDown, Type } from 'lucide-react';
 
 export default function Home() {
   const navigate = useNavigate();
+  const [inputType, setInputType] = useState<'text' | 'file' | 'link'>('text');
   const [inputValue, setInputValue] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const [voice, setVoice] = useState('Zephyr');
   const [bgMusic, setBgMusic] = useState(true);
   const [showVoiceMenu, setShowVoiceMenu] = useState(false);
@@ -21,22 +25,45 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleStart = async () => {
-    if (inputValue.trim() && !isSubmitting) {
-      setIsSubmitting(true);
-      try {
-        const res = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ input: inputValue, voice, bgMusic })
-        });
-        const data = await res.json();
-        if (data.id) {
-          navigate(`/create/${data.id}`);
-        }
-      } catch (e) {
-        console.error("Failed to start generation", e);
-        setIsSubmitting(false);
+    if ((inputType === 'text' && !inputValue.trim()) || 
+        (inputType === 'link' && !inputValue.trim()) || 
+        (inputType === 'file' && !selectedFile)) {
+      return;
+    }
+
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('voice', voice);
+      formData.append('bgMusic', String(bgMusic));
+      formData.append('type', inputType);
+
+      if (inputType === 'file' && selectedFile) {
+        formData.append('file', selectedFile);
+      } else {
+        formData.append('input', inputValue);
       }
+
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        body: formData // Send as FormData
+      });
+      
+      const data = await res.json();
+      if (data.id) {
+        navigate(`/create/${data.id}`);
+      }
+    } catch (e) {
+      console.error("Failed to start generation", e);
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSelectedFile(e.target.files[0]);
     }
   };
 
@@ -54,7 +81,7 @@ export default function Home() {
       >
         <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gray-900 text-sm font-medium text-white mb-8 shadow-lg shadow-gray-900/20">
           <Sparkles className="w-4 h-4 text-purple-400" />
-          VibeKnow
+          Open-VibeKnow
         </div>
         
         <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-gray-900 mb-12 text-center">
@@ -62,28 +89,74 @@ export default function Home() {
         </h1>
 
         <div className="w-full bg-white rounded-2xl shadow-xl shadow-purple-900/5 border border-purple-100 flex flex-col relative z-10">
-          {/* Tabs - Hidden for now as requested */}
-          {/* 
+          {/* Tabs */}
           <div className="flex items-center gap-6 px-6 py-4 border-b border-gray-50">
-            <button className="flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors">
+            <button 
+              onClick={() => setInputType('text')}
+              className={`flex items-center gap-2 text-sm font-medium transition-colors ${inputType === 'text' ? 'text-purple-600' : 'text-gray-500 hover:text-gray-900'}`}
+            >
+              <Type className="w-4 h-4" />
+              输入文本
+            </button>
+            <button 
+              onClick={() => setInputType('file')}
+              className={`flex items-center gap-2 text-sm font-medium transition-colors ${inputType === 'file' ? 'text-purple-600' : 'text-gray-500 hover:text-gray-900'}`}
+            >
               <FileUp className="w-4 h-4" />
               上传文件
             </button>
-            <button className="flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors">
+            <button 
+              onClick={() => setInputType('link')}
+              className={`flex items-center gap-2 text-sm font-medium transition-colors ${inputType === 'link' ? 'text-purple-600' : 'text-gray-500 hover:text-gray-900'}`}
+            >
               <LinkIcon className="w-4 h-4" />
               添加链接
             </button>
           </div>
-          */}
 
-          {/* Text Area */}
+          {/* Input Area */}
           <div className="p-6">
-            <textarea
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="输入或粘贴文本内容..."
-              className="w-full h-40 resize-none outline-none text-gray-700 placeholder:text-gray-300 text-lg"
-            />
+            {inputType === 'text' && (
+              <textarea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder="输入或粘贴文本内容..."
+                className="w-full h-40 resize-none outline-none text-gray-700 placeholder:text-gray-300 text-lg"
+              />
+            )}
+            
+            {inputType === 'file' && (
+              <div 
+                className="w-full h-40 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-purple-400 hover:bg-purple-50/50 transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleFileChange} 
+                  className="hidden" 
+                  accept=".txt,.md,.pdf,.doc,.docx"
+                />
+                <FileUp className="w-8 h-8 text-gray-400 mb-3" />
+                <p className="text-gray-600 font-medium">
+                  {selectedFile ? selectedFile.name : '点击或拖拽文件到此处上传'}
+                </p>
+                <p className="text-gray-400 text-sm mt-1">支持 TXT, MD, PDF, DOC 等格式</p>
+              </div>
+            )}
+
+            {inputType === 'link' && (
+              <div className="w-full h-40 flex flex-col justify-center">
+                <input
+                  type="url"
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  placeholder="https://example.com/article"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-lg"
+                />
+                <p className="text-gray-400 text-sm mt-3 ml-1">输入文章、新闻或网页的链接，AI将自动提取内容</p>
+              </div>
+            )}
           </div>
 
           {/* Bottom Controls */}
@@ -124,12 +197,14 @@ export default function Home() {
             </div>
 
             <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-400">
-                {inputValue.length}/5000
-              </span>
+              {inputType === 'text' && (
+                <span className="text-sm text-gray-400">
+                  {inputValue.length}/5000
+                </span>
+              )}
               <button
                 onClick={handleStart}
-                disabled={!inputValue.trim() || isSubmitting}
+                disabled={((inputType === 'text' || inputType === 'link') && !inputValue.trim()) || (inputType === 'file' && !selectedFile) || isSubmitting}
                 className="bg-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-purple-600/20 flex items-center gap-2"
               >
                 {isSubmitting ? (
