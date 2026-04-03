@@ -1,4 +1,4 @@
-import { Scene } from './gemini';
+import { Scene } from '../types';
 
 export async function exportVideo(scenes: Scene[]) {
   // This is a simplified mock of video export.

@@ -1,15 +1,26 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { motion } from 'motion/react';
-import { FileUp, Link as LinkIcon, Mic, Music, Sparkles } from 'lucide-react';
+import { FileUp, Link as LinkIcon, Mic, Music, Sparkles, ChevronDown } from 'lucide-react';
 
 export default function Home() {
   const navigate = useNavigate();
   const [inputValue, setInputValue] = useState('');
+  const [voice, setVoice] = useState('Zephyr');
+  const [bgMusic, setBgMusic] = useState(true);
+  const [showVoiceMenu, setShowVoiceMenu] = useState(false);
+
+  const voices = [
+    { id: 'Zephyr', name: '芝舒 (女声)' },
+    { id: 'Puck', name: '帕克 (男声)' },
+    { id: 'Charon', name: '卡戎 (男声)' },
+    { id: 'Kore', name: '科瑞 (女声)' },
+    { id: 'Fenrir', name: '芬里尔 (男声)' },
+  ];
 
   const handleStart = () => {
     if (inputValue.trim()) {
-      navigate('/create', { state: { initialInput: inputValue } });
+      navigate('/create', { state: { initialInput: inputValue, voice, bgMusic } });
     }
   };
 
@@ -59,16 +70,38 @@ export default function Home() {
 
           {/* Bottom Controls */}
           <div className="px-6 py-4 bg-gray-50/50 flex items-center justify-between border-t border-gray-50">
-            <div className="flex items-center gap-3">
-              <button className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm">
+            <div className="flex items-center gap-3 relative">
+              <button 
+                onClick={() => setShowVoiceMenu(!showVoiceMenu)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
+              >
                 <div className="w-5 h-5 rounded-full bg-gradient-to-br from-pink-400 to-purple-500 flex items-center justify-center text-[10px] text-white">
-                  芝
+                  {voices.find(v => v.id === voice)?.name.charAt(0)}
                 </div>
-                芝舒
+                {voices.find(v => v.id === voice)?.name}
+                <ChevronDown className="w-3 h-3 text-gray-400" />
               </button>
-              <button className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm">
-                <Music className="w-4 h-4 text-gray-400" />
-                背景音乐
+
+              {showVoiceMenu && (
+                <div className="absolute top-full left-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-xl py-1 z-10">
+                  {voices.map(v => (
+                    <button
+                      key={v.id}
+                      onClick={() => { setVoice(v.id); setShowVoiceMenu(false); }}
+                      className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${voice === v.id ? 'text-purple-600 font-medium bg-purple-50/50' : 'text-gray-700'}`}
+                    >
+                      {v.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <button 
+                onClick={() => setBgMusic(!bgMusic)}
+                className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm font-medium transition-colors shadow-sm ${bgMusic ? 'bg-purple-50 border-purple-200 text-purple-700' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+              >
+                <Music className={`w-4 h-4 ${bgMusic ? 'text-purple-500' : 'text-gray-400'}`} />
+                背景音乐 {bgMusic ? '开' : '关'}
               </button>
             </div>
 

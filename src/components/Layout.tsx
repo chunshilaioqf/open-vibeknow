@@ -1,20 +1,28 @@
 import { Outlet, Link, useLocation } from 'react-router';
 import { Video, Plus, Folder, Star, BookOpen, Clock } from 'lucide-react';
+import { useEffect, useState } from 'react';
+
+interface HistoryTask {
+  id: number;
+  title: string;
+  time: string;
+}
 
 export default function Layout() {
   const location = useLocation();
+  const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
+
+  useEffect(() => {
+    fetch('/api/history')
+      .then(res => res.json())
+      .then(data => setHistoryTasks(data))
+      .catch(err => console.error("Failed to fetch history:", err));
+  }, []);
 
   const navItems = [
     { name: '我的作品', path: '/works', icon: Folder },
     { name: '优秀作品', path: '/explore', icon: Star },
     { name: '学习教程', path: '/tutorials', icon: BookOpen },
-  ];
-
-  // Mock history tasks
-  const historyTasks = [
-    { id: 1, title: '地缘风暴下黄金原油多空博弈', time: '10分钟前' },
-    { id: 2, title: 'AI 视频生成原理解析', time: '2小时前' },
-    { id: 3, title: '如何写出爆款短视频脚本', time: '昨天' },
   ];
 
   return (

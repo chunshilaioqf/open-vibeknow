@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
-import { generateScript, generateImage, generateAudio, Scene, VideoPlan } from '../lib/gemini';
+import { Scene, VideoPlan } from '../types';
 import { exportVideo } from '../lib/exportVideo';
 import { Loader2, Play, Pause, RotateCcw, Image as ImageIcon, Volume2, FileText, CheckCircle2, Download, Video, Sparkles } from 'lucide-react';
 
 export default function Create() {
   const location = useLocation();
   const [input, setInput] = useState(location.state?.initialInput || '');
+  const [voice, setVoice] = useState(location.state?.voice || 'Zephyr');
+  const [bgMusic, setBgMusic] = useState(location.state?.bgMusic ?? true);
+  
   const [status, setStatus] = useState<'idle' | 'generating' | 'done'>('idle');
   const [plan, setPlan] = useState<VideoPlan | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
@@ -15,53 +18,84 @@ export default function Create() {
   const [error, setError] = useState('');
 
   const addStep = (step: string) => {
-    setProgressSteps(prev => [...prev, step]);
+    setProgressSteps(prev => {
+      if (!prev.includes(step)) return [...prev, step];
+      return prev;
+    });
   };
 
   const handleGenerate = async () => {
     if (!input.trim()) return;
     
+    setError('');
+    setStatus('generating');
+    setPlan(null);
+    setScenes([]);
+    setProgressSteps([]);
+
     try {
-      setError('');
-      setStatus('generating');
-      setPlan(null);
-      setScenes([]);
-      setProgressSteps([]);
-      
-      addStep('启动视频生成引擎');
-      addStep('深度检索知识库');
-      
-      const generatedPlan = await generateScript(input);
-      if (!generatedPlan || !generatedPlan.scenes || generatedPlan.scenes.length === 0) {
-        throw new Error("Failed to generate script.");
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ input, voice, bgMusic }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to start generation');
       }
-      
-      addStep('核心内容摘要生成完毕');
-      addStep('构建智能解说脚本');
-      
-      setPlan(generatedPlan);
-      setScenes(generatedPlan.scenes);
-      
-      addStep('正在生成画面与配音');
-      
-      const updatedScenes = [...generatedPlan.scenes];
-      
-      // Generate assets in parallel for each scene
-      await Promise.all(updatedScenes.map(async (scene, index) => {
-        const [imageUrl, audioUrl] = await Promise.all([
-          generateImage(scene.imagePrompt).then(res => res || 'failed'),
-          generateAudio(scene.narration).then(res => res || 'failed')
-        ]);
-        
-        updatedScenes[index] = { ...scene, imageUrl, audioUrl };
-        setScenes([...updatedScenes]); // Trigger re-render to show partial progress
-      }));
-      
-      addStep('渲染任务提交成功');
-      addStep('生成视频');
-      addStep('视频预览已生成');
-      
-      setStatus('done');
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No reader available');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            const eventType = line.substring(7).split('\n')[0];
+            const dataLine = line.split('\n')[1];
+            if (dataLine && dataLine.startsWith('data: ')) {
+              const data = JSON.parse(dataLine.substring(6));
+
+              switch (eventType) {
+                case 'progress':
+                  addStep(data.step);
+                  break;
+                case 'plan':
+                  setPlan(data);
+                  setScenes(data.scenes);
+                  break;
+                case 'scene_update':
+                  setScenes(prev => {
+                    const newScenes = [...prev];
+                    newScenes[data.index] = data.scene;
+                    return newScenes;
+                  });
+                  break;
+                case 'error':
+                  setError(data.message);
+                  setStatus('idle');
+                  return;
+                case 'done':
+                  setPlan(data.plan);
+                  setScenes(data.plan.scenes);
+                  setStatus('done');
+                  break;
+              }
+            }
+          }
+        }
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || "An error occurred during generation.");
@@ -126,8 +160,11 @@ export default function Create() {
                       <p className="text-gray-600 text-sm leading-relaxed mb-4">
                         {plan.summary}
                       </p>
-                      <button className="w-full bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 transition-colors shadow-sm">
-                        重新生成
+                      <button 
+                        onClick={() => { setStatus('idle'); setInput(''); }}
+                        className="w-full bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 transition-colors shadow-sm"
+                      >
+                        创作新视频
                       </button>
                     </div>
                   )}
@@ -166,7 +203,7 @@ export default function Create() {
             
             <div className="bg-black aspect-video relative flex items-center justify-center">
               {status === 'done' && scenes.length > 0 ? (
-                <VideoPlayer scenes={scenes} />
+                <VideoPlayer scenes={scenes} bgMusic={bgMusic} />
               ) : (
                 <div className="text-gray-500 flex flex-col items-center gap-4">
                   {status === 'idle' ? (
@@ -234,10 +271,11 @@ export default function Create() {
   );
 }
 
-function VideoPlayer({ scenes }: { scenes: Scene[] }) {
+function VideoPlayer({ scenes, bgMusic }: { scenes: Scene[], bgMusic: boolean }) {
   const [currentSceneIdx, setCurrentSceneIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const bgMusicRef = useRef<HTMLAudioElement>(null);
 
   const currentScene = scenes[currentSceneIdx];
   
@@ -247,6 +285,10 @@ function VideoPlayer({ scenes }: { scenes: Scene[] }) {
     } else {
       setIsPlaying(false);
       setCurrentSceneIdx(0);
+      if (bgMusicRef.current) {
+        bgMusicRef.current.pause();
+        bgMusicRef.current.currentTime = 0;
+      }
     }
   };
 
@@ -254,6 +296,11 @@ function VideoPlayer({ scenes }: { scenes: Scene[] }) {
     let timeoutId: NodeJS.Timeout;
 
     if (isPlaying) {
+      if (bgMusic && bgMusicRef.current && bgMusicRef.current.paused) {
+        bgMusicRef.current.volume = 0.1;
+        bgMusicRef.current.play().catch(e => console.error("BG Music play failed", e));
+      }
+
       if (currentScene?.audioUrl && currentScene.audioUrl !== 'failed' && audioRef.current) {
         audioRef.current.play().catch(e => {
           console.error("Audio play failed", e);
@@ -264,20 +311,28 @@ function VideoPlayer({ scenes }: { scenes: Scene[] }) {
         // Fallback if no audio
         timeoutId = setTimeout(handleAudioEnded, 3000);
       }
+    } else {
+      if (bgMusicRef.current) {
+        bgMusicRef.current.pause();
+      }
     }
 
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [currentSceneIdx, isPlaying, currentScene]);
+  }, [currentSceneIdx, isPlaying, currentScene, bgMusic]);
 
   const togglePlay = () => {
     if (isPlaying) {
       audioRef.current?.pause();
+      bgMusicRef.current?.pause();
       setIsPlaying(false);
     } else {
       setIsPlaying(true);
       audioRef.current?.play().catch(e => console.error("Audio play failed", e));
+      if (bgMusic && bgMusicRef.current) {
+        bgMusicRef.current.play().catch(e => console.error("BG Music play failed", e));
+      }
     }
   };
 
@@ -350,6 +405,14 @@ function VideoPlayer({ scenes }: { scenes: Scene[] }) {
           ref={audioRef}
           src={currentScene.audioUrl}
           onEnded={handleAudioEnded}
+          className="hidden"
+        />
+      )}
+      {bgMusic && (
+        <audio
+          ref={bgMusicRef}
+          src="https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=ambient-piano-amp-strings-10711.mp3"
+          loop
           className="hidden"
         />
       )}
