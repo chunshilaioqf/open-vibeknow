@@ -17,7 +17,7 @@ export default function Layout() {
       .then(res => res.json())
       .then(data => setHistoryTasks(data))
       .catch(err => console.error("Failed to fetch history:", err));
-  }, []);
+  }, [location.pathname]);
 
   const navItems = [
     { name: '我的作品', path: '/works', icon: Folder },
@@ -38,7 +38,7 @@ export default function Layout() {
 
         <div className="px-4 mb-6">
           <Link
-            to="/create"
+            to="/"
             className="w-full bg-purple-600 text-white px-4 py-3 rounded-xl text-sm font-medium hover:bg-purple-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-purple-200"
           >
             <Plus className="w-4 h-4" />
@@ -74,12 +74,13 @@ export default function Layout() {
           </div>
           <div className="space-y-0.5">
             {historyTasks.map((task) => (
-              <button
+              <Link
                 key={task.id}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors truncate"
+                to={`/create/${task.id}`}
+                className="block w-full text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors truncate"
               >
                 {task.title}
-              </button>
+              </Link>
             ))}
           </div>
         </nav>

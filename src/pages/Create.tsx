@@ -1,17 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router';
+import { useParams, useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import { Scene, VideoPlan } from '../types';
 import { exportVideo } from '../lib/exportVideo';
 import { Loader2, Play, Pause, RotateCcw, Image as ImageIcon, Volume2, FileText, CheckCircle2, Download, Video, Sparkles } from 'lucide-react';
 
 export default function Create() {
-  const location = useLocation();
-  const [input, setInput] = useState(location.state?.initialInput || '');
-  const [voice, setVoice] = useState(location.state?.voice || 'Zephyr');
-  const [bgMusic, setBgMusic] = useState(location.state?.bgMusic ?? true);
+  const { id } = useParams();
+  const navigate = useNavigate();
   
-  const [status, setStatus] = useState<'idle' | 'generating' | 'done'>('idle');
+  const [input, setInput] = useState('');
+  const [voice, setVoice] = useState('Zephyr');
+  const [bgMusic, setBgMusic] = useState(true);
+  
+  const [status, setStatus] = useState<'idle' | 'generating' | 'done' | 'error'>('idle');
   const [plan, setPlan] = useState<VideoPlan | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [progressSteps, setProgressSteps] = useState<string[]>([]);
@@ -24,91 +26,64 @@ export default function Create() {
     });
   };
 
-  const handleGenerate = async () => {
-    if (!input.trim()) return;
-    
-    setError('');
-    setStatus('generating');
+  useEffect(() => {
+    if (!id) return;
+
+    // Reset state when ID changes
+    setStatus('idle');
     setPlan(null);
     setScenes([]);
     setProgressSteps([]);
+    setError('');
 
-    try {
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ input, voice, bgMusic }),
+    let eventSource: EventSource | null = null;
+
+    const connectStream = () => {
+      eventSource = new EventSource(`/api/tasks/${id}/stream`);
+
+      eventSource.addEventListener('init', (e) => {
+        const data = JSON.parse(e.data);
+        setInput(data.input);
+        setVoice(data.voice);
+        setBgMusic(data.bgMusic);
+        setStatus(data.status);
+        if (data.plan) {
+          setPlan(data.plan);
+          setScenes(data.plan.scenes || []);
+        }
+        if (data.currentStep) addStep(data.currentStep);
+        if (data.error) setError(data.error);
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to start generation');
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No reader available');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            const eventType = line.substring(7).split('\n')[0];
-            const dataLine = line.split('\n')[1];
-            if (dataLine && dataLine.startsWith('data: ')) {
-              const data = JSON.parse(dataLine.substring(6));
-
-              switch (eventType) {
-                case 'progress':
-                  addStep(data.step);
-                  break;
-                case 'plan':
-                  setPlan(data);
-                  setScenes(data.scenes);
-                  break;
-                case 'scene_update':
-                  setScenes(prev => {
-                    const newScenes = [...prev];
-                    newScenes[data.index] = data.scene;
-                    return newScenes;
-                  });
-                  break;
-                case 'error':
-                  setError(data.message);
-                  setStatus('idle');
-                  return;
-                case 'done':
-                  setPlan(data.plan);
-                  setScenes(data.plan.scenes);
-                  setStatus('done');
-                  break;
-              }
-            }
-          }
+      eventSource.addEventListener('state_update', (e) => {
+        const data = JSON.parse(e.data);
+        setStatus(data.status);
+        if (data.plan) {
+          setPlan(data.plan);
+          setScenes(data.plan.scenes || []);
         }
-      }
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || "An error occurred during generation.");
-      setStatus('idle');
-    }
-  };
+        if (data.currentStep) addStep(data.currentStep);
+        if (data.error) setError(data.error);
+        
+        if (data.status === 'done' || data.status === 'error') {
+          eventSource?.close();
+        }
+      });
 
-  // Auto-start if there's initial input
-  useEffect(() => {
-    if (location.state?.initialInput && status === 'idle') {
-      handleGenerate();
-    }
-  }, []);
+      eventSource.onerror = () => {
+        console.error('SSE connection error');
+        eventSource?.close();
+      };
+    };
+
+    connectStream();
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }, [id]);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8F9FC] p-6 overflow-hidden">
@@ -161,7 +136,7 @@ export default function Create() {
                         {plan.summary}
                       </p>
                       <button 
-                        onClick={() => { setStatus('idle'); setInput(''); }}
+                        onClick={() => navigate('/')}
                         className="w-full bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 transition-colors shadow-sm"
                       >
                         创作新视频

@@ -8,6 +8,33 @@ dotenv.config();
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// In-memory task store
+interface Task {
+  id: string;
+  title: string;
+  time: string;
+  status: 'idle' | 'generating' | 'done' | 'error';
+  progress: number;
+  currentStep: string;
+  plan: any | null;
+  error: string | null;
+  input: string;
+  voice: string;
+  bgMusic: boolean;
+  createdAt: number;
+}
+
+const tasks = new Map<string, Task>();
+// Store active SSE connections
+const clients = new Map<string, express.Response[]>();
+
+function broadcastToClients(taskId: string, event: string, data: any) {
+  const taskClients = clients.get(taskId) || [];
+  taskClients.forEach(res => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  });
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -16,15 +43,50 @@ async function startServer() {
 
   // API Routes
   app.get("/api/history", (req, res) => {
-    // Mock history tasks
-    const historyTasks = [
-      { id: 1, title: '地缘风暴下黄金原油多空博弈', time: '10分钟前' },
-      { id: 2, title: 'AI 视频生成原理解析', time: '2小时前' },
-      { id: 3, title: '如何写出爆款短视频脚本', time: '昨天' },
-      { id: 4, title: '2028年科技趋势预测', time: '2天前' },
-      { id: 5, title: '新手如何快速入门 React', time: '3天前' },
-    ];
+    const historyTasks = Array.from(tasks.values())
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map(t => ({
+        id: t.id,
+        title: t.title || '未命名视频',
+        time: new Date(t.createdAt).toLocaleString(),
+        status: t.status
+      }));
     res.json(historyTasks);
+  });
+
+  app.get("/api/tasks/:id", (req, res) => {
+    const task = tasks.get(req.params.id);
+    if (!task) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+    res.json(task);
+  });
+
+  app.get("/api/tasks/:id/stream", (req, res) => {
+    const taskId = req.params.id;
+    const task = tasks.get(taskId);
+    
+    if (!task) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Add to clients
+    if (!clients.has(taskId)) {
+      clients.set(taskId, []);
+    }
+    clients.get(taskId)!.push(res);
+
+    // Send current state immediately
+    res.write(`event: init\ndata: ${JSON.stringify(task)}\n\n`);
+
+    req.on('close', () => {
+      const taskClients = clients.get(taskId) || [];
+      clients.set(taskId, taskClients.filter(c => c !== res));
+    });
   });
 
   app.post("/api/generate", async (req, res) => {
@@ -34,18 +96,42 @@ async function startServer() {
       return res.status(400).json({ error: "Input is required" });
     }
 
-    // We will use Server-Sent Events (SSE) to stream progress
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+    const taskId = Date.now().toString();
+    const newTask: Task = {
+      id: taskId,
+      title: '生成中...',
+      time: new Date().toLocaleString(),
+      status: 'generating',
+      progress: 0,
+      currentStep: '启动视频生成引擎',
+      plan: null,
+      error: null,
+      input,
+      voice: voice || 'Zephyr',
+      bgMusic: !!bgMusic,
+      createdAt: Date.now()
+    };
 
-    const sendEvent = (event: string, data: any) => {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    tasks.set(taskId, newTask);
+    
+    // Return ID immediately
+    res.json({ id: taskId });
+
+    // Start generation asynchronously
+    runGeneration(taskId);
+  });
+
+  async function runGeneration(taskId: string) {
+    const task = tasks.get(taskId);
+    if (!task) return;
+
+    const updateTask = (updates: Partial<Task>) => {
+      Object.assign(task, updates);
+      broadcastToClients(taskId, 'state_update', task);
     };
 
     try {
-      sendEvent('progress', { step: '启动视频生成引擎' });
-      sendEvent('progress', { step: '深度检索知识库' });
+      updateTask({ currentStep: '深度检索知识库' });
 
       // 1. Generate Script
       const response = await ai.models.generateContent({
@@ -59,7 +145,7 @@ async function startServer() {
 - narration: 旁白文本（中文，口语化，每段1-2句话）。
 - imagePrompt: 用于生成配图的英文提示词（详细、电影感、高质量）。
 
-输入内容: ${input}`,
+输入内容: ${task.input}`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -91,12 +177,15 @@ async function startServer() {
         throw new Error("Failed to generate script.");
       }
 
-      sendEvent('progress', { step: '核心内容摘要生成完毕' });
-      sendEvent('progress', { step: '构建智能解说脚本' });
-      sendEvent('plan', plan);
-      sendEvent('progress', { step: '正在生成画面与配音' });
+      updateTask({ 
+        title: plan.title,
+        currentStep: '构建智能解说脚本',
+        plan
+      });
 
       // 2. Generate Assets in parallel
+      updateTask({ currentStep: '正在生成画面与配音' });
+      
       const updatedScenes = [...plan.scenes];
       const totalAssets = updatedScenes.length * 2;
       let completedAssets = 0;
@@ -105,33 +194,37 @@ async function startServer() {
         const [imageUrl, audioUrl] = await Promise.all([
           generateImage(scene.imagePrompt).then(res => {
             completedAssets++;
-            sendEvent('asset_progress', { progress: Math.round((completedAssets / totalAssets) * 100) });
+            updateTask({ progress: Math.round((completedAssets / totalAssets) * 100) });
             return res || 'failed';
           }),
-          generateAudio(scene.narration, voice).then(res => {
+          generateAudio(scene.narration, task.voice).then(res => {
             completedAssets++;
-            sendEvent('asset_progress', { progress: Math.round((completedAssets / totalAssets) * 100) });
+            updateTask({ progress: Math.round((completedAssets / totalAssets) * 100) });
             return res || 'failed';
           })
         ]);
         
         updatedScenes[index] = { ...scene, imageUrl, audioUrl };
-        sendEvent('scene_update', { index, scene: updatedScenes[index] });
+        
+        // Update plan with new scenes
+        const newPlan = { ...task.plan, scenes: updatedScenes };
+        updateTask({ plan: newPlan });
       }));
 
-      sendEvent('progress', { step: '渲染任务提交成功' });
-      sendEvent('progress', { step: '生成视频' });
-      sendEvent('progress', { step: '视频预览已生成' });
-      
-      sendEvent('done', { plan: { ...plan, scenes: updatedScenes } });
-      res.end();
+      updateTask({ 
+        currentStep: '视频预览已生成',
+        status: 'done',
+        progress: 100
+      });
 
     } catch (error: any) {
       console.error("Generation error:", error);
-      sendEvent('error', { message: error.message || "An error occurred during generation." });
-      res.end();
+      updateTask({ 
+        status: 'error',
+        error: error.message || "An error occurred during generation."
+      });
     }
-  });
+  }
 
   // Helper functions for generation
   async function generateImage(prompt: string): Promise<string | null> {

@@ -18,9 +18,25 @@ export default function Home() {
     { id: 'Fenrir', name: '芬里尔 (男声)' },
   ];
 
-  const handleStart = () => {
-    if (inputValue.trim()) {
-      navigate('/create', { state: { initialInput: inputValue, voice, bgMusic } });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleStart = async () => {
+    if (inputValue.trim() && !isSubmitting) {
+      setIsSubmitting(true);
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input: inputValue, voice, bgMusic })
+        });
+        const data = await res.json();
+        if (data.id) {
+          navigate(`/create/${data.id}`);
+        }
+      } catch (e) {
+        console.error("Failed to start generation", e);
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -45,8 +61,9 @@ export default function Home() {
           一键把文档 / URL 变成<span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-500">讲得清楚的视频</span>
         </h1>
 
-        <div className="w-full bg-white rounded-2xl shadow-xl shadow-purple-900/5 border border-purple-100 overflow-hidden flex flex-col">
-          {/* Tabs */}
+        <div className="w-full bg-white rounded-2xl shadow-xl shadow-purple-900/5 border border-purple-100 flex flex-col relative z-10">
+          {/* Tabs - Hidden for now as requested */}
+          {/* 
           <div className="flex items-center gap-6 px-6 py-4 border-b border-gray-50">
             <button className="flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors">
               <FileUp className="w-4 h-4" />
@@ -57,6 +74,7 @@ export default function Home() {
               添加链接
             </button>
           </div>
+          */}
 
           {/* Text Area */}
           <div className="p-6">
@@ -69,7 +87,7 @@ export default function Home() {
           </div>
 
           {/* Bottom Controls */}
-          <div className="px-6 py-4 bg-gray-50/50 flex items-center justify-between border-t border-gray-50">
+          <div className="px-6 py-4 bg-gray-50/50 rounded-b-2xl flex items-center justify-between border-t border-gray-50">
             <div className="flex items-center gap-3 relative">
               <button 
                 onClick={() => setShowVoiceMenu(!showVoiceMenu)}
@@ -83,7 +101,7 @@ export default function Home() {
               </button>
 
               {showVoiceMenu && (
-                <div className="absolute top-full left-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-xl py-1 z-10">
+                <div className="absolute bottom-full left-0 mb-2 w-48 bg-white border border-gray-100 rounded-xl shadow-xl py-1 z-50">
                   {voices.map(v => (
                     <button
                       key={v.id}
@@ -111,10 +129,17 @@ export default function Home() {
               </span>
               <button
                 onClick={handleStart}
-                disabled={!inputValue.trim()}
-                className="bg-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-purple-600/20"
+                disabled={!inputValue.trim() || isSubmitting}
+                className="bg-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-purple-600/20 flex items-center gap-2"
               >
-                生成视频
+                {isSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    提交中...
+                  </>
+                ) : (
+                  '生成视频'
+                )}
               </button>
             </div>
           </div>
