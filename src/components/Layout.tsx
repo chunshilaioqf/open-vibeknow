@@ -17,7 +17,13 @@ export default function Layout() {
 
   useEffect(() => {
     fetch('/api/history')
-      .then(res => res.json())
+      .then(async res => {
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP error! status: ${res.status}, body: ${text.substring(0, 100)}`);
+        }
+        return res.json();
+      })
       .then(data => setHistoryTasks(data))
       .catch(err => console.error("Failed to fetch history:", err));
   }, [location.pathname]);

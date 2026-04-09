@@ -95,6 +95,21 @@ async function ensureDirs() {
 // Setup Multer
 const upload = multer({ dest: UPLOAD_DIR });
 
+const DEFAULT_OPTIMIZE_PROMPT = `你是一个专业的短视频文案优化专家。请优化以下用户输入的短视频提示词/文案，使其更适合生成高质量的短视频脚本。
+要求：
+1. 语言生动、有吸引力。
+2. 结构清晰，适合转化为分镜。
+3. 直接输出优化后的文本，不要包含任何解释或多余的话语。`;
+
+const DEFAULT_GENERATE_PROMPT = `你是一个专业的短视频编导。请将以下文本或链接内容转化为一个短视频脚本。
+请提供：
+1. title: 视频的吸引人的标题（15字以内）。
+2. summary: 对内容的简短总结，用于向用户确认创作方向（约100字）。
+3. scenes: 拆分为 3 到 5 个分镜。
+对于每个分镜，提供：
+- narration: 旁白文本（中文，口语化，每段1-2句话）。
+- imagePrompt: 用于生成配图的英文提示词（详细、电影感、高质量）。`;
+
 // Database setup
 let db: any;
 async function setupDb() {
@@ -109,8 +124,22 @@ async function setupDb() {
       status TEXT,
       createdAt INTEGER,
       data JSON
-    )
+    );
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
   `);
+
+  // Initialize default prompts
+  const optPrompt = await db.get(`SELECT value FROM settings WHERE key = 'optimize_prompt'`);
+  if (!optPrompt) {
+    await db.run(`INSERT INTO settings (key, value) VALUES ('optimize_prompt', ?)`, [DEFAULT_OPTIMIZE_PROMPT]);
+  }
+  const genPrompt = await db.get(`SELECT value FROM settings WHERE key = 'generate_prompt'`);
+  if (!genPrompt) {
+    await db.run(`INSERT INTO settings (key, value) VALUES ('generate_prompt', ?)`, [DEFAULT_GENERATE_PROMPT]);
+  }
 }
 
 interface Task {
@@ -174,6 +203,41 @@ async function startServer() {
   app.use('/video', express.static(VIDEO_DIR));
 
   // API Routes
+  app.get("/api/settings/prompts", async (req, res) => {
+    try {
+      const opt = await db.get(`SELECT value FROM settings WHERE key = 'optimize_prompt'`);
+      const gen = await db.get(`SELECT value FROM settings WHERE key = 'generate_prompt'`);
+      res.json({ optimize_prompt: opt?.value || '', generate_prompt: gen?.value || '' });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/settings/prompts", async (req, res) => {
+    try {
+      const { optimize_prompt, generate_prompt } = req.body;
+      if (optimize_prompt) {
+        await db.run(`UPDATE settings SET value = ? WHERE key = 'optimize_prompt'`, [optimize_prompt]);
+      }
+      if (generate_prompt) {
+        await db.run(`UPDATE settings SET value = ? WHERE key = 'generate_prompt'`, [generate_prompt]);
+      }
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/settings/prompts/restore", async (req, res) => {
+    try {
+      await db.run(`UPDATE settings SET value = ? WHERE key = 'optimize_prompt'`, [DEFAULT_OPTIMIZE_PROMPT]);
+      await db.run(`UPDATE settings SET value = ? WHERE key = 'generate_prompt'`, [DEFAULT_GENERATE_PROMPT]);
+      res.json({ optimize_prompt: DEFAULT_OPTIMIZE_PROMPT, generate_prompt: DEFAULT_GENERATE_PROMPT });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/history", async (req, res) => {
     const rows = await db.all(`SELECT data FROM tasks ORDER BY createdAt DESC`);
     const historyTasks = rows.map((r: any) => {
@@ -227,11 +291,8 @@ async function startServer() {
     if (!text) return res.status(400).json({ error: "Text is required" });
     
     try {
-      const systemInstruction = `你是一个专业的短视频文案优化专家。请优化以下用户输入的短视频提示词/文案，使其更适合生成高质量的短视频脚本。
-要求：
-1. 语言生动、有吸引力。
-2. 结构清晰，适合转化为分镜。
-3. 直接输出优化后的文本，不要包含任何解释或多余的话语。`;
+      const optRow = await db.get(`SELECT value FROM settings WHERE key = 'optimize_prompt'`);
+      const systemInstruction = optRow?.value || DEFAULT_OPTIMIZE_PROMPT;
 
       const optimizedText = await generateWithFallback(models || [], text, systemInstruction, 'text');
       
@@ -320,14 +381,8 @@ async function startServer() {
     try {
       await updateTask({ currentStep: '深度检索知识库' });
 
-      const systemInstruction = `你是一个专业的短视频编导。请将以下文本或链接内容转化为一个短视频脚本。
-请提供：
-1. title: 视频的吸引人的标题（15字以内）。
-2. summary: 对内容的简短总结，用于向用户确认创作方向（约100字）。
-3. scenes: 拆分为 3 到 5 个分镜。
-对于每个分镜，提供：
-- narration: 旁白文本（中文，口语化，每段1-2句话）。
-- imagePrompt: 用于生成配图的英文提示词（详细、电影感、高质量）。`;
+      const genRow = await db.get(`SELECT value FROM settings WHERE key = 'generate_prompt'`);
+      const systemInstruction = genRow?.value || DEFAULT_GENERATE_PROMPT;
 
       const jsonStr = await generateWithFallback(
         modelsConfig,

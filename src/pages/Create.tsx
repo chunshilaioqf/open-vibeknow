@@ -99,12 +99,18 @@ export default function Create() {
           </div>
           
           <div className="flex-1 overflow-y-auto p-4 space-y-6">
-            {/* User Input Bubble */}
-            <div className="flex flex-col items-end gap-1">
-              <div className="bg-purple-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-sm max-w-[85%] text-sm shadow-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
-                {input || "开始生成视频..."}
+            {/* User Input Section */}
+            {input && (
+              <div className="bg-purple-50 border border-purple-100 rounded-xl p-4 mb-2 shadow-sm">
+                <h3 className="text-sm font-semibold text-purple-800 mb-2 flex items-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  您的输入内容
+                </h3>
+                <div className="text-sm text-gray-700 whitespace-pre-wrap max-h-40 overflow-y-auto font-medium leading-relaxed">
+                  {input}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Progress Steps */}
             {progressSteps.length > 0 && (

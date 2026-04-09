@@ -39,6 +39,10 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: inputValue, models: modelsConfig })
       });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP error! status: ${res.status}, body: ${text.substring(0, 100)}`);
+      }
       const data = await res.json();
       if (data.optimizedText) {
         setOriginalPrompt(inputValue);
@@ -81,6 +85,11 @@ export default function Home() {
         method: 'POST',
         body: formData // Send as FormData
       });
+      
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP error! status: ${res.status}, body: ${text.substring(0, 100)}`);
+      }
       
       const data = await res.json();
       if (data.id) {
