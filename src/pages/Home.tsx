@@ -1,14 +1,19 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { motion } from 'motion/react';
-import { FileUp, Link as LinkIcon, Mic, Music, Sparkles, ChevronDown, Type } from 'lucide-react';
+import { FileUp, Link as LinkIcon, Mic, Music, Sparkles, ChevronDown, Type, Wand2, X } from 'lucide-react';
 
 export default function Home() {
   const navigate = useNavigate();
-  const [inputType, setInputType] = useState<'text' | 'file' | 'link'>('text');
   const [inputValue, setInputValue] = useState('');
+  const [originalPrompt, setOriginalPrompt] = useState('');
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [linkValue, setLinkValue] = useState('');
+  const [showLinkInput, setShowLinkInput] = useState(false);
   
   const [voice, setVoice] = useState('Zephyr');
   const [bgMusic, setBgMusic] = useState(true);
@@ -24,10 +29,30 @@ export default function Home() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const handleOptimize = async () => {
+    if (!inputValue.trim() || isOptimizing) return;
+    setIsOptimizing(true);
+    try {
+      const modelsConfig = JSON.parse(localStorage.getItem('openVibeKnowModels') || '[]');
+      const res = await fetch('/api/optimize-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: inputValue, models: modelsConfig })
+      });
+      const data = await res.json();
+      if (data.optimizedText) {
+        setOriginalPrompt(inputValue);
+        setInputValue(data.optimizedText);
+      }
+    } catch (e) {
+      console.error("Failed to optimize prompt", e);
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
+
   const handleStart = async () => {
-    if ((inputType === 'text' && !inputValue.trim()) || 
-        (inputType === 'link' && !inputValue.trim()) || 
-        (inputType === 'file' && !selectedFile)) {
+    if (!inputValue.trim() && !selectedFile && !linkValue.trim()) {
       return;
     }
 
@@ -38,12 +63,18 @@ export default function Home() {
       const formData = new FormData();
       formData.append('voice', voice);
       formData.append('bgMusic', String(bgMusic));
-      formData.append('type', inputType);
-
-      if (inputType === 'file' && selectedFile) {
-        formData.append('file', selectedFile);
-      } else {
+      
+      const modelsConfig = localStorage.getItem('openVibeKnowModels') || '[]';
+      formData.append('models', modelsConfig);
+      
+      if (inputValue.trim()) {
         formData.append('input', inputValue);
+      }
+      if (linkValue.trim()) {
+        formData.append('link', linkValue);
+      }
+      if (selectedFile) {
+        formData.append('file', selectedFile);
       }
 
       const res = await fetch('/api/generate', {
@@ -89,47 +120,63 @@ export default function Home() {
         </h1>
 
         <div className="w-full bg-white rounded-2xl shadow-xl shadow-purple-900/5 border border-purple-100 flex flex-col relative z-10">
-          {/* Tabs */}
-          <div className="flex items-center gap-6 px-6 py-4 border-b border-gray-50">
-            <button 
-              onClick={() => setInputType('text')}
-              className={`flex items-center gap-2 text-sm font-medium transition-colors ${inputType === 'text' ? 'text-purple-600' : 'text-gray-500 hover:text-gray-900'}`}
-            >
-              <Type className="w-4 h-4" />
-              输入文本
-            </button>
-            <button 
-              onClick={() => setInputType('file')}
-              className={`flex items-center gap-2 text-sm font-medium transition-colors ${inputType === 'file' ? 'text-purple-600' : 'text-gray-500 hover:text-gray-900'}`}
-            >
-              <FileUp className="w-4 h-4" />
-              上传文件
-            </button>
-            <button 
-              onClick={() => setInputType('link')}
-              className={`flex items-center gap-2 text-sm font-medium transition-colors ${inputType === 'link' ? 'text-purple-600' : 'text-gray-500 hover:text-gray-900'}`}
-            >
-              <LinkIcon className="w-4 h-4" />
-              添加链接
-            </button>
-          </div>
-
           {/* Input Area */}
-          <div className="p-6">
-            {inputType === 'text' && (
+          <div className="p-6 flex flex-col gap-4">
+            <div className="relative">
               <textarea
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 placeholder="输入或粘贴文本内容..."
                 className="w-full h-40 resize-none outline-none text-gray-700 placeholder:text-gray-300 text-lg"
               />
-            )}
-            
-            {inputType === 'file' && (
-              <div 
-                className="w-full h-40 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-purple-400 hover:bg-purple-50/50 transition-colors"
-                onClick={() => fileInputRef.current?.click()}
-              >
+              {originalPrompt && (
+                <button 
+                  onClick={() => {
+                    setInputValue(originalPrompt);
+                    setOriginalPrompt('');
+                  }}
+                  className="absolute bottom-2 right-2 text-xs text-gray-500 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                >
+                  <X className="w-3 h-3" />
+                  取消优化
+                </button>
+              )}
+            </div>
+
+            {/* Attachments Area */}
+            <div className="flex flex-col gap-3">
+              {/* If file selected, show file chip */}
+              {selectedFile && (
+                <div className="flex items-center justify-between bg-purple-50 px-4 py-2 rounded-lg border border-purple-100">
+                  <div className="flex items-center gap-2">
+                    <FileUp className="w-4 h-4 text-purple-500" />
+                    <span className="text-sm text-purple-700">{selectedFile.name}</span>
+                  </div>
+                  <button onClick={() => setSelectedFile(null)} className="text-purple-400 hover:text-purple-600">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              
+              {/* If link added, show link input */}
+              {showLinkInput && (
+                <div className="flex items-center gap-2">
+                  <LinkIcon className="w-4 h-4 text-gray-400" />
+                  <input
+                    type="url"
+                    value={linkValue}
+                    onChange={(e) => setLinkValue(e.target.value)}
+                    placeholder="https://example.com/article"
+                    className="flex-1 px-3 py-2 rounded-lg border border-gray-200 outline-none focus:border-purple-400 text-sm"
+                  />
+                  <button onClick={() => { setShowLinkInput(false); setLinkValue(''); }} className="text-gray-400 hover:text-gray-600">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* Attachment Buttons */}
+              <div className="flex items-center gap-4 pt-2 border-t border-gray-50">
                 <input 
                   type="file" 
                   ref={fileInputRef} 
@@ -137,26 +184,26 @@ export default function Home() {
                   className="hidden" 
                   accept=".txt,.md,.pdf,.doc,.docx"
                 />
-                <FileUp className="w-8 h-8 text-gray-400 mb-3" />
-                <p className="text-gray-600 font-medium">
-                  {selectedFile ? selectedFile.name : '点击或拖拽文件到此处上传'}
-                </p>
-                <p className="text-gray-400 text-sm mt-1">支持 TXT, MD, PDF, DOC 等格式</p>
+                {!selectedFile && (
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-2 text-sm text-gray-500 hover:text-purple-600 transition-colors"
+                  >
+                    <FileUp className="w-4 h-4" />
+                    上传文件
+                  </button>
+                )}
+                {!showLinkInput && (
+                  <button 
+                    onClick={() => setShowLinkInput(true)}
+                    className="flex items-center gap-2 text-sm text-gray-500 hover:text-purple-600 transition-colors"
+                  >
+                    <LinkIcon className="w-4 h-4" />
+                    添加链接
+                  </button>
+                )}
               </div>
-            )}
-
-            {inputType === 'link' && (
-              <div className="w-full h-40 flex flex-col justify-center">
-                <input
-                  type="url"
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  placeholder="https://example.com/article"
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-lg"
-                />
-                <p className="text-gray-400 text-sm mt-3 ml-1">输入文章、新闻或网页的链接，AI将自动提取内容</p>
-              </div>
-            )}
+            </div>
           </div>
 
           {/* Bottom Controls */}
@@ -196,15 +243,23 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="flex items-center gap-4">
-              {inputType === 'text' && (
-                <span className="text-sm text-gray-400">
-                  {inputValue.length}/5000
-                </span>
-              )}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleOptimize}
+                disabled={!inputValue.trim() || isOptimizing}
+                title="优化提示词"
+                className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:text-purple-600 hover:border-purple-200 hover:bg-purple-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isOptimizing ? (
+                  <div className="w-5 h-5 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Wand2 className="w-5 h-5" />
+                )}
+              </button>
+              
               <button
                 onClick={handleStart}
-                disabled={((inputType === 'text' || inputType === 'link') && !inputValue.trim()) || (inputType === 'file' && !selectedFile) || isSubmitting}
+                disabled={(!inputValue.trim() && !selectedFile && !linkValue.trim()) || isSubmitting}
                 className="bg-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-purple-600/20 flex items-center gap-2"
               >
                 {isSubmitting ? (

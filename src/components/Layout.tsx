@@ -1,16 +1,19 @@
 import { Outlet, Link, useLocation } from 'react-router';
-import { Video, Plus, Folder, Star, BookOpen, Clock } from 'lucide-react';
+import { Video, Plus, Folder, Star, BookOpen, Clock, Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import SettingsModal from './SettingsModal';
 
 interface HistoryTask {
   id: number;
   title: string;
   time: string;
+  input?: string;
 }
 
 export default function Layout() {
   const location = useLocation();
   const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
     fetch('/api/history')
@@ -21,7 +24,6 @@ export default function Layout() {
 
   const navItems = [
     { name: '我的作品', path: '/works', icon: Folder },
-    { name: '优秀作品', path: '/explore', icon: Star },
     { name: '学习教程', path: '/tutorials', icon: BookOpen },
   ];
 
@@ -46,7 +48,7 @@ export default function Layout() {
           </Link>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1">
+        <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
             const isActive = location.pathname === item.path;
             const Icon = item.icon;
@@ -72,29 +74,30 @@ export default function Layout() {
               历史任务
             </div>
           </div>
-          <div className="space-y-0.5">
+          <div className="space-y-1">
             {historyTasks.map((task) => (
               <Link
                 key={task.id}
                 to={`/create/${task.id}`}
-                className="block w-full text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors truncate"
+                className="block w-full text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
               >
-                {task.title}
+                <div className="truncate font-medium">{task.title}</div>
+                {task.input && (
+                  <div className="truncate text-xs text-gray-400 mt-0.5">{task.input}</div>
+                )}
               </Link>
             ))}
           </div>
         </nav>
         
         <div className="p-4 border-t border-gray-100">
-          <div className="flex items-center gap-3 px-3 py-2">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-sm">
-              U
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 truncate">User</p>
-              <p className="text-xs text-gray-500 truncate">Free Plan</p>
-            </div>
-          </div>
+          <button 
+            onClick={() => setIsSettingsOpen(true)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+          >
+            <Settings className="w-4 h-4" />
+            全局设置
+          </button>
         </div>
       </aside>
 
@@ -102,6 +105,8 @@ export default function Layout() {
       <main className="flex-1 flex flex-col min-h-screen overflow-hidden">
         <Outlet />
       </main>
+
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 }

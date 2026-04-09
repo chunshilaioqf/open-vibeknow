@@ -7,10 +7,76 @@ import dotenv from "dotenv";
 import sqlite3 from "sqlite3";
 import { open } from "sqlite";
 import multer from "multer";
+import OpenAI from "openai";
 
 dotenv.config();
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+interface ModelConfig {
+  id: string;
+  provider: 'google' | 'openai' | 'custom';
+  modelName: string;
+  apiKey: string;
+  baseUrl?: string;
+}
+
+async function generateWithFallback(
+  models: ModelConfig[],
+  prompt: string,
+  systemInstruction: string,
+  responseFormat?: 'json_object' | 'text'
+): Promise<string> {
+  if (!models || models.length === 0) {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-pro-preview",
+      contents: prompt,
+      config: {
+        systemInstruction: systemInstruction,
+        responseMimeType: responseFormat === 'json_object' ? "application/json" : "text/plain"
+      }
+    });
+    return response.text || "";
+  }
+
+  let lastError: any = null;
+
+  for (const config of models) {
+    try {
+      if (config.provider === 'google') {
+        const client = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY });
+        const response = await client.models.generateContent({
+          model: config.modelName || "gemini-3.1-pro-preview",
+          contents: prompt,
+          config: {
+            systemInstruction: systemInstruction,
+            responseMimeType: responseFormat === 'json_object' ? "application/json" : "text/plain"
+          }
+        });
+        return response.text || "";
+      } else if (config.provider === 'openai' || config.provider === 'custom') {
+        const client = new OpenAI({
+          apiKey: config.apiKey,
+          baseURL: config.baseUrl || undefined
+        });
+        const response = await client.chat.completions.create({
+          model: config.modelName || "gpt-4o",
+          messages: [
+            { role: "system", content: systemInstruction },
+            { role: "user", content: prompt }
+          ],
+          response_format: responseFormat === 'json_object' ? { type: "json_object" } : undefined
+        });
+        return response.choices[0].message.content || "";
+      }
+    } catch (e) {
+      console.error(`Model ${config.modelName} (${config.provider}) failed:`, e);
+      lastError = e;
+    }
+  }
+
+  throw new Error(`All models failed. Last error: ${lastError?.message}`);
+}
 
 // Setup directories
 const OUTPUT_DIR = path.join(process.cwd(), "output");
@@ -116,7 +182,8 @@ async function startServer() {
         id: t.id,
         title: t.title || '未命名视频',
         time: new Date(t.createdAt).toLocaleString(),
-        status: t.status
+        status: t.status,
+        input: t.input
       };
     });
     res.json(historyTasks);
@@ -155,30 +222,61 @@ async function startServer() {
     });
   });
 
-  app.post("/api/generate", upload.single('file'), async (req, res) => {
-    let { input, voice, bgMusic, type } = req.body;
+  app.post("/api/optimize-prompt", async (req, res) => {
+    const { text, models } = req.body;
+    if (!text) return res.status(400).json({ error: "Text is required" });
     
+    try {
+      const systemInstruction = `你是一个专业的短视频文案优化专家。请优化以下用户输入的短视频提示词/文案，使其更适合生成高质量的短视频脚本。
+要求：
+1. 语言生动、有吸引力。
+2. 结构清晰，适合转化为分镜。
+3. 直接输出优化后的文本，不要包含任何解释或多余的话语。`;
+
+      const optimizedText = await generateWithFallback(models || [], text, systemInstruction, 'text');
+      
+      res.json({ optimizedText: optimizedText.trim() });
+    } catch (e: any) {
+      console.error("Optimization error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/generate", upload.single('file'), async (req, res) => {
+    let { input, voice, bgMusic, link, models } = req.body;
+    
+    let parsedModels: ModelConfig[] = [];
+    try {
+      if (models) {
+        parsedModels = JSON.parse(models);
+      }
+    } catch (e) {
+      console.error("Failed to parse models config", e);
+    }
+
+    let finalInput = input || '';
+
     // Handle file upload
     if (req.file) {
       try {
         const fileContent = await fs.readFile(req.file.path, 'utf-8');
-        input = fileContent; // Use file content as input
+        finalInput += `\n\n[文件内容]:\n${fileContent}`;
       } catch (e) {
         return res.status(400).json({ error: "Failed to read uploaded file" });
       }
-    } else if (type === 'link' && input) {
-      // Basic link fetching (mocking full extraction for simplicity)
+    } 
+    
+    if (link) {
       try {
-        const fetchRes = await fetch(input);
+        const fetchRes = await fetch(link);
         const text = await fetchRes.text();
-        // Just extract some text or use a placeholder if it's HTML
-        input = `Extracted content from ${input}:\n\n` + text.substring(0, 5000); 
+        finalInput += `\n\n[链接内容提取 (${link})]:\n${text.substring(0, 5000)}`; 
       } catch (e) {
         return res.status(400).json({ error: "Failed to fetch link" });
       }
     }
 
-    if (!input) {
+    if (!finalInput.trim()) {
       return res.status(400).json({ error: "Input is required" });
     }
 
@@ -192,7 +290,7 @@ async function startServer() {
       currentStep: '启动视频生成引擎',
       plan: null,
       error: null,
-      input,
+      input: finalInput,
       voice: voice || 'Zephyr',
       bgMusic: bgMusic === 'true' || bgMusic === true,
       createdAt: Date.now()
@@ -200,13 +298,13 @@ async function startServer() {
 
     activeTasks.set(taskId, newTask);
     await saveTaskToDb(newTask);
-    await logToFile(taskId, `Task created with input length: ${input.length}`);
+    await logToFile(taskId, `Task created with input length: ${input?.length || 0}`);
     
     res.json({ id: taskId });
-    runGeneration(taskId);
+    runGeneration(taskId, parsedModels);
   });
 
-  async function runGeneration(taskId: string) {
+  async function runGeneration(taskId: string, modelsConfig: ModelConfig[]) {
     const task = activeTasks.get(taskId);
     if (!task) return;
 
@@ -222,43 +320,22 @@ async function startServer() {
     try {
       await updateTask({ currentStep: '深度检索知识库' });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: `你是一个专业的短视频编导。请将以下文本或链接内容转化为一个短视频脚本。
+      const systemInstruction = `你是一个专业的短视频编导。请将以下文本或链接内容转化为一个短视频脚本。
 请提供：
 1. title: 视频的吸引人的标题（15字以内）。
 2. summary: 对内容的简短总结，用于向用户确认创作方向（约100字）。
 3. scenes: 拆分为 3 到 5 个分镜。
 对于每个分镜，提供：
 - narration: 旁白文本（中文，口语化，每段1-2句话）。
-- imagePrompt: 用于生成配图的英文提示词（详细、电影感、高质量）。
+- imagePrompt: 用于生成配图的英文提示词（详细、电影感、高质量）。`;
 
-输入内容: ${task.input.substring(0, 10000)}`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              summary: { type: Type.STRING },
-              scenes: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    narration: { type: Type.STRING },
-                    imagePrompt: { type: Type.STRING },
-                  },
-                  required: ["narration", "imagePrompt"],
-                },
-              },
-            },
-            required: ["title", "summary", "scenes"],
-          },
-        },
-      });
+      const jsonStr = await generateWithFallback(
+        modelsConfig,
+        `输入内容: ${task.input.substring(0, 10000)}`,
+        systemInstruction,
+        'json_object'
+      );
 
-      const jsonStr = response.text?.trim() || "{}";
       const plan = JSON.parse(jsonStr);
 
       if (!plan || !plan.scenes || plan.scenes.length === 0) {
